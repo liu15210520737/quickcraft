@@ -1,6 +1,7 @@
 package com.yiyihehe.quickcraft;
 
 import com.yiyihehe.quickcraft.config.QuickCraftConfigs;
+import com.yiyihehe.quickcraft.config.QuickCraftItemAliases;
 import com.yiyihehe.quickcraft.mixin.HandledScreenAccessor;
 import com.yiyihehe.quickcraft.mixin.CreativeInventoryScreenInvoker;
 import com.yiyihehe.quickcraft.mixin.CreativeSlotAccessor;
@@ -477,6 +478,7 @@ public class QuickSort implements ClientModInitializer {
         List<ItemStack> priorityStacks = new ArrayList<>();
         List<ItemStack> normalStacks = new ArrayList<>();
         List<ItemStack> bundleStacks = new ArrayList<>();
+        List<ItemStack> bottomPriorityStacks = new ArrayList<>();
         List<ItemStack> shulkerStacks = new ArrayList<>();
 
         for (int slotId : slotIds) {
@@ -486,8 +488,10 @@ public class QuickSort implements ClientModInitializer {
             }
 
             ItemStack copy = stack.copy();
-            if (isPriorityFrontStack(copy)) {
+            if (getTopPriorityIndex(copy) >= 0) {
                 priorityStacks.add(copy);
+            } else if (getBottomPriorityIndex(copy) >= 0) {
+                bottomPriorityStacks.add(copy);
             } else if (isBundle(copy)) {
                 bundleStacks.add(copy);
             } else if (isShulkerBox(copy)) {
@@ -497,12 +501,28 @@ public class QuickSort implements ClientModInitializer {
             }
         }
 
-        priorityStacks.sort(QuickSort::compareStacks);
+        priorityStacks.sort(QuickSort::comparePriorityStacks);
         normalStacks.sort(QuickSort::compareStacks);
         bundleStacks.sort(QuickSort::compareBundleStacks);
+        bottomPriorityStacks.sort(QuickSort::compareBottomPriorityStacks);
         shulkerStacks.sort(QuickSort::compareShulkerStacks);
 
         int totalSlots = slotIds.size();
+        boolean sortStorageWithNormalStacks = false;
+        if (!QuickCraftConfigs.areQuickSortBundlesAtEnd()) {
+            normalStacks.addAll(bundleStacks);
+            bundleStacks.clear();
+            sortStorageWithNormalStacks = true;
+        }
+        if (!QuickCraftConfigs.areQuickSortShulkerBoxesAtEnd()) {
+            normalStacks.addAll(shulkerStacks);
+            shulkerStacks.clear();
+            sortStorageWithNormalStacks = true;
+        }
+        if (sortStorageWithNormalStacks) {
+            normalStacks.sort(QuickSort::compareStacksWithStorageContents);
+        }
+
         int reservedBottomSlots = Math.min(bundleStacks.size() + shulkerStacks.size(), totalSlots);
         int normalSlotCount = totalSlots - reservedBottomSlots;
         List<ItemStack> result = new ArrayList<>(totalSlots);
@@ -513,6 +533,10 @@ public class QuickSort implements ClientModInitializer {
 
         for (int i = 0; i < normalStacks.size() && result.size() < normalSlotCount; i++) {
             result.add(normalStacks.get(i));
+        }
+
+        for (int i = 0; i < bottomPriorityStacks.size() && result.size() < normalSlotCount; i++) {
+            result.add(bottomPriorityStacks.get(i));
         }
 
         while (result.size() < normalSlotCount) {
@@ -764,6 +788,32 @@ public class QuickSort implements ClientModInitializer {
         return Integer.compare(b.getCount(), a.getCount());
     }
 
+    private static int comparePriorityStacks(ItemStack a, ItemStack b) {
+        int priorityCompare = Integer.compare(getTopPriorityIndex(a), getTopPriorityIndex(b));
+        if (priorityCompare != 0) {
+            return priorityCompare;
+        }
+        return compareStacks(a, b);
+    }
+
+    private static int compareBottomPriorityStacks(ItemStack a, ItemStack b) {
+        int priorityCompare = Integer.compare(getBottomPriorityIndex(a), getBottomPriorityIndex(b));
+        if (priorityCompare != 0) {
+            return priorityCompare;
+        }
+        return compareStacks(a, b);
+    }
+
+    private static int compareStacksWithStorageContents(ItemStack a, ItemStack b) {
+        if (isShulkerBox(a) && isShulkerBox(b)) {
+            return compareShulkerStacks(a, b);
+        }
+        if (isBundle(a) && isBundle(b)) {
+            return compareBundleStacks(a, b);
+        }
+        return compareStacks(a, b);
+    }
+
     private static int compareShulkerStacks(ItemStack a, ItemStack b) {
         return compareStorageStacks(a, b, getShulkerContentsSortKey(a), getShulkerContentsSortKey(b));
     }
@@ -957,31 +1007,44 @@ public class QuickSort implements ClientModInitializer {
         return String.join("|", itemKeys);
     }
 
-    private static boolean isPriorityFrontStack(ItemStack stack) {
-        if (!stack.hasEnchantments()) {
-            return false;
-        }
-
+    private static int getTopPriorityIndex(ItemStack stack) {
         String itemId = getItemId(stack);
-        if ("minecraft:elytra".equals(itemId)) {
-            return true;
+        String itemPath = Registries.ITEM.getId(stack.getItem()).getPath();
+        String itemName = stack.getItem().getDefaultStack().getName().getString();
+        List<String> configuredItems = QuickCraftConfigs.getQuickSortTopPriorityItems();
+
+        for (int index = 0; index < configuredItems.size(); index++) {
+            if (QuickCraftItemAliases.matches(
+                    configuredItems.get(index),
+                    itemId,
+                    itemPath,
+                    itemName,
+                    stack.hasEnchantments())) {
+                return index;
+            }
         }
 
-        boolean highTierGear = itemId.startsWith("minecraft:diamond_")
-            || itemId.startsWith("minecraft:netherite_");
-        if (!highTierGear) {
-            return false;
+        return -1;
+    }
+
+    private static int getBottomPriorityIndex(ItemStack stack) {
+        String itemId = getItemId(stack);
+        String itemPath = Registries.ITEM.getId(stack.getItem()).getPath();
+        String itemName = stack.getItem().getDefaultStack().getName().getString();
+        List<String> configuredItems = QuickCraftConfigs.getQuickSortBottomPriorityItems();
+
+        for (int index = 0; index < configuredItems.size(); index++) {
+            if (QuickCraftItemAliases.matches(
+                    configuredItems.get(index),
+                    itemId,
+                    itemPath,
+                    itemName,
+                    stack.hasEnchantments())) {
+                return index;
+            }
         }
 
-        return itemId.endsWith("_helmet")
-            || itemId.endsWith("_chestplate")
-            || itemId.endsWith("_leggings")
-            || itemId.endsWith("_boots")
-            || itemId.endsWith("_sword")
-            || itemId.endsWith("_axe")
-            || itemId.endsWith("_pickaxe")
-            || itemId.endsWith("_shovel")
-            || itemId.endsWith("_hoe");
+        return -1;
     }
 
     private static boolean stacksEqualExactly(ItemStack current, ItemStack expected) {

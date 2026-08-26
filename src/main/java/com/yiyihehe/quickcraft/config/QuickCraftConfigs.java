@@ -24,7 +24,9 @@ import fi.dy.masa.malilib.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * QuickCraft 的 malilib 配置定义与持久化。
@@ -39,6 +41,8 @@ public final class QuickCraftConfigs implements IConfigHandler {
     private static final String PROJECTION_TRANSLATION_PREFIX = QuickCraft.MOD_ID + ".config.projection_tools";
     private static final String MOD_SUPPORT_TRANSLATION_PREFIX = QuickCraft.MOD_ID + ".config.mod_support";
     private static final String HOTKEY_TRANSLATION_PREFIX = QuickCraft.MOD_ID + ".config.hotkeys";
+    private static final String BUTTON_POSITIONS_KEY = "ButtonPositions";
+    private static final Map<String, ButtonOffset> BUTTON_OFFSETS = new HashMap<>();
 
     public static final int DEFAULT_CRAFT_LOOPS_PER_TICK = 20;
     public static final int MIN_CRAFT_LOOPS_PER_TICK = 1;
@@ -59,12 +63,15 @@ public final class QuickCraftConfigs implements IConfigHandler {
     public static final int MAX_MATERIAL_COLLECT_EXTRA_50_TO_100 = 100;
     public static final int MAX_MATERIAL_COLLECT_EXTRA_100_TO_500 = 500;
     public static final int MAX_MATERIAL_COLLECT_EXTRA_OVER_500 = 512;
-    public static final int DEFAULT_HOLD_EASY_PLACE_CACHE_TIME_MS = 2000;
+    public static final int DEFAULT_HOLD_EASY_PLACE_CACHE_TIME_MS = 500;
     public static final int MIN_HOLD_EASY_PLACE_CACHE_TIME_MS = 10;
     public static final int MAX_HOLD_EASY_PLACE_CACHE_TIME_MS = 10000;
     public static final int DEFAULT_QUICK_SHULKER_ACTION_INTERVAL_TICKS = 5;
     public static final int MIN_QUICK_SHULKER_ACTION_INTERVAL_TICKS = 0;
     public static final int MAX_QUICK_SHULKER_ACTION_INTERVAL_TICKS = 20;
+    private static final ImmutableList<String> DEFAULT_QUICK_SORT_TOP_PRIORITY_ITEMS =
+            ImmutableList.copyOf(QuickCraftItemAliases.getDefaultPriorityAliases());
+    private static final ImmutableList<String> DEFAULT_QUICK_SORT_BOTTOM_PRIORITY_ITEMS = ImmutableList.of();
 
     private static final KeybindSettings GUI_PRESS = KeybindSettings.create(
             KeybindSettings.Context.GUI,
@@ -151,10 +158,75 @@ public final class QuickCraftConfigs implements IConfigHandler {
         }
     }
 
+    public enum WorkbenchShulkerPipelineMode implements IConfigOptionListEntry {
+        RESPONSE_STABLE(
+                "response_stable",
+                "quickcraft.label.workbench_shulker_pipeline_mode.response_stable"),
+        BALANCED(
+                "balanced",
+                "quickcraft.label.workbench_shulker_pipeline_mode.balanced"),
+        COMBINED_ULTRA(
+                "combined_ultra",
+                "quickcraft.label.workbench_shulker_pipeline_mode.combined_ultra");
+
+        private final String configValue;
+        private final String translationKey;
+
+        WorkbenchShulkerPipelineMode(String configValue, String translationKey) {
+            this.configValue = configValue;
+            this.translationKey = translationKey;
+        }
+
+        @Override
+        public String getStringValue() {
+            return this.configValue;
+        }
+
+        @Override
+        public String getDisplayName() {
+            return StringUtils.translate(this.translationKey);
+        }
+
+        @Override
+        public IConfigOptionListEntry cycle(boolean forward) {
+            int next = this.ordinal() + (forward ? 1 : -1);
+            if (next < 0) {
+                next = values().length - 1;
+            } else if (next >= values().length) {
+                next = 0;
+            }
+            return values()[next];
+        }
+
+        @Override
+        public IConfigOptionListEntry fromString(String value) {
+            for (WorkbenchShulkerPipelineMode mode : values()) {
+                if (mode.configValue.equalsIgnoreCase(value)) {
+                    return mode;
+                }
+            }
+            return RESPONSE_STABLE;
+        }
+    }
+
     public static final class Crafting {
         public static final ConfigBooleanHotkeyed ENABLE_WORKBENCH = new ConfigBooleanHotkeyed(
                 "enableWorkbenchQuickCraft",
                 true,
+                ""
+        ).apply(CRAFTING_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_WORKBENCH_QUICK_SHULKER = new ConfigBooleanHotkeyed(
+                "enableWorkbenchQuickCraftWithQuickShulker",
+                false,
+                ""
+        ).apply(CRAFTING_TRANSLATION_PREFIX);
+        public static final ConfigOptionList WORKBENCH_QUICK_SHULKER_PIPELINE_MODE = new ConfigOptionList(
+                "workbenchQuickShulkerPipelineMode",
+                WorkbenchShulkerPipelineMode.RESPONSE_STABLE
+        ).apply(CRAFTING_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_WORKBENCH_QUICK_SHULKER_OUTPUT = new ConfigBooleanHotkeyed(
+                "enableWorkbenchQuickCraftOutputToShulker",
+                false,
                 ""
         ).apply(CRAFTING_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_BACKPACK = new ConfigBooleanHotkeyed(
@@ -192,6 +264,9 @@ public final class QuickCraftConfigs implements IConfigHandler {
 
         public static final List<IConfigBase> OPTIONS = List.of(
                 ENABLE_WORKBENCH,
+                ENABLE_WORKBENCH_QUICK_SHULKER,
+                WORKBENCH_QUICK_SHULKER_PIPELINE_MODE,
+                ENABLE_WORKBENCH_QUICK_SHULKER_OUTPUT,
                 ENABLE_BACKPACK,
                 ENABLE_STONECUTTER,
                 ENABLE_ANVIL_RENAME,
@@ -210,9 +285,24 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 true,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed SHOW_MATCHING_TRANSFER_HIGHLIGHT = new ConfigBooleanHotkeyed(
+                "showMatchingTransferHighlight",
+                false,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_SCROLL_TRANSFER = new ConfigBooleanHotkeyed(
+                "enableScrollTransfer",
+                true,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed QUICK_TRANSFER_RETAIN_ONE = new ConfigBooleanHotkeyed(
                 "quickTransferRetainOne",
-                false,
+                true,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed SHOW_QUICK_STASH_BUTTON = new ConfigBooleanHotkeyed(
+                "showQuickStashButton",
+                true,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_QUICK_THROW = new ConfigBooleanHotkeyed(
@@ -222,6 +312,11 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_QUICK_TRADE = new ConfigBooleanHotkeyed(
                 "enableQuickTrade",
+                false,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_CONTINUOUS_TRADE = new ConfigBooleanHotkeyed(
+                "enableContinuousTrade",
                 false,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
@@ -235,14 +330,35 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 true,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigStringList QUICK_SORT_TOP_PRIORITY_ITEMS = new ConfigStringList(
+                "quickSortTopPriorityItems",
+                DEFAULT_QUICK_SORT_TOP_PRIORITY_ITEMS
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigStringList QUICK_SORT_BOTTOM_PRIORITY_ITEMS = new ConfigStringList(
+                "quickSortBottomPriorityItems",
+                DEFAULT_QUICK_SORT_BOTTOM_PRIORITY_ITEMS
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean QUICK_SORT_SHULKER_BOXES_AT_END = new ConfigBoolean(
+                "quickSortShulkerBoxesAtEnd",
+                true
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean QUICK_SORT_BUNDLES_AT_END = new ConfigBoolean(
+                "quickSortBundlesAtEnd",
+                true
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed SHOW_CONTAINER_LOCK_BUTTON = new ConfigBooleanHotkeyed(
                 "showContainerLockButton",
-                false,
+                true,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed SHOW_SLOT_LOCK_OVERLAY = new ConfigBooleanHotkeyed(
                 "showSlotLockOverlay",
                 false,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ALLOW_MANUAL_LOCKED_SLOT_INTERACTION = new ConfigBooleanHotkeyed(
+                "allowManualLockedSlotInteraction",
+                true,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_CONTAINER_TOOL_MODE = new ConfigBooleanHotkeyed(
@@ -255,10 +371,43 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 ContainerToolMode.QUICK_STASH,
                 ""
         ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_CREATIVE_PACKING = new ConfigBooleanHotkeyed(
+                "enableCreativePacking",
+                false,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigInteger CREATIVE_PACKING_BUNDLE_STACKS = new ConfigInteger(
+                "creativePackingBundleStacks",
+                1,
+                1,
+                64,
+                true
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_CREATIVE_PACKING_NESTED_CONTAINERS = new ConfigBoolean(
+                "allowCreativePackingNestedContainers",
+                false
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_QUICK_BEACON = new ConfigBooleanHotkeyed(
                 "enableQuickBeacon",
                 false,
                 ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_FREE_CAMERA_ENHANCEMENT = new ConfigBooleanHotkeyed(
+                "enableFreeCameraEnhancement",
+                true,
+                ""
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean FREE_CAMERA_BLOCK_INTERACTIONS = new ConfigBoolean(
+                "freeCameraBlockInteractions",
+                true
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean FREE_CAMERA_ENTITY_INTERACTIONS = new ConfigBoolean(
+                "freeCameraEntityInteractions",
+                true
+        ).apply(CONTAINER_TRANSLATION_PREFIX);
+        public static final ConfigBoolean FREE_CAMERA_EASY_PLACE = new ConfigBoolean(
+                "freeCameraEasyPlace",
+                true
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final ConfigStringList BEACON_EFFECT_ORDER = new ConfigStringList(
                 "beaconEffectOrder",
@@ -273,15 +422,31 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ).apply(CONTAINER_TRANSLATION_PREFIX);
         public static final List<IConfigBase> OPTIONS = List.of(
                 ENABLE_QUICK_TRANSFER,
+                SHOW_MATCHING_TRANSFER_HIGHLIGHT,
+                ENABLE_SCROLL_TRANSFER,
                 QUICK_TRANSFER_RETAIN_ONE,
+                SHOW_QUICK_STASH_BUTTON,
                 ENABLE_QUICK_THROW,
                 ENABLE_QUICK_TRADE,
+                ENABLE_CONTINUOUS_TRADE,
                 ENABLE_FAVORITE_TRADE,
                 ENABLE_QUICK_SORT,
+                QUICK_SORT_TOP_PRIORITY_ITEMS,
+                QUICK_SORT_BOTTOM_PRIORITY_ITEMS,
+                QUICK_SORT_SHULKER_BOXES_AT_END,
+                QUICK_SORT_BUNDLES_AT_END,
                 SHOW_CONTAINER_LOCK_BUTTON,
                 SHOW_SLOT_LOCK_OVERLAY,
+                ALLOW_MANUAL_LOCKED_SLOT_INTERACTION,
                 ENABLE_CONTAINER_TOOL_MODE,
                 CONTAINER_TOOL_MODE,
+                ENABLE_CREATIVE_PACKING,
+                CREATIVE_PACKING_BUNDLE_STACKS,
+                ALLOW_CREATIVE_PACKING_NESTED_CONTAINERS,
+                ENABLE_FREE_CAMERA_ENHANCEMENT,
+                FREE_CAMERA_BLOCK_INTERACTIONS,
+                FREE_CAMERA_ENTITY_INTERACTIONS,
+                FREE_CAMERA_EASY_PLACE,
                 ENABLE_QUICK_BEACON,
                 BEACON_EFFECT_ORDER
         );
@@ -296,15 +461,81 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 true,
                 ""
         ).apply(PROJECTION_TRANSLATION_PREFIX);
-        public static final ConfigBooleanHotkeyed ALLOW_EASY_PLACE_OPEN_CONTAINERS = new ConfigBooleanHotkeyed(
+        public static final ConfigBoolean AUTO_DISABLE_SHADERS_FOR_3D_PREVIEW = new ConfigBoolean(
+                "autoDisableShadersFor3DPreview",
+                false
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_LITEMATICA_AREA_CLONE = new ConfigBooleanHotkeyed(
+                "enableLitematicaAreaClone",
+                true,
+                ""
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_ADDING_LITEMATICA_PREVIEW_IMAGES = new ConfigBoolean(
+                "allowAddingLitematicaPreviewImages",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean REPLACE_LITEMATICA_PREVIEW_WITH_3D = new ConfigBoolean(
+                "replaceLitematicaPreviewWith3D",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ALLOW_EASY_PLACE_VANILLA_INTERACTIONS = new ConfigBooleanHotkeyed(
                 "allowEasyPlaceOpenContainers",
                 false,
                 ""
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_INTERACTION_SCREENS = new ConfigBoolean(
+                "allowEasyPlaceInteractionScreens",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_REDSTONE_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceRedstoneInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_FUNCTIONAL_BLOCK_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceFunctionalBlockInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_FLUID_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceFluidInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_TOOL_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceToolInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_DECORATION_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceDecorationInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_SURVIVAL_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceSurvivalInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_SPECIAL_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceSpecialInteractions",
+                true
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_DANGEROUS_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceDangerousInteractions",
+                false
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_EASY_PLACE_ADMIN_INTERACTIONS = new ConfigBoolean(
+                "allowEasyPlaceAdminInteractions",
+                false
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed HOLD_EASY_PLACE = new ConfigBooleanHotkeyed(
                 "holdEasyPlace",
                 false,
                 ""
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_EASY_PLACE_ENTITIES = new ConfigBooleanHotkeyed(
+                "enableEasyPlaceEntities",
+                false,
+                ""
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ALLOW_CREATIVE_ENTITY_PLACEMENT = new ConfigBoolean(
+                "allowCreativeEntityPlacement",
+                true
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigInteger HOLD_EASY_PLACE_CACHE_TIME_MS = new ConfigInteger(
                 "holdEasyPlaceCacheTimeMs",
@@ -312,6 +543,11 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 MIN_HOLD_EASY_PLACE_CACHE_TIME_MS,
                 MAX_HOLD_EASY_PLACE_CACHE_TIME_MS,
                 false
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed SHOW_LITEMATICA_SCHEMATIC_FOLDER_BUTTON = new ConfigBooleanHotkeyed(
+                "showLitematicaSchematicFolderButton",
+                true,
+                ""
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed SHOW_LITEMATICA_CONTAINER_MATERIAL_BUTTON = new ConfigBooleanHotkeyed(
                 "showLitematicaContainerMaterialButton",
@@ -382,12 +618,12 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_CREATIVE_CONTAINER_FILL = new ConfigBooleanHotkeyed(
                 "enableCreativeContainerFill",
-                false,
+                true,
                 ""
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigBooleanHotkeyed ENABLE_CONTAINER_FILL_OVERFLOW_DROP = new ConfigBooleanHotkeyed(
                 "enableContainerFillOverflowDrop",
-                false,
+                true,
                 ""
         ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final ConfigInteger CONTAINER_FILL_FREE_SLOTS_LIMIT = new ConfigInteger(
@@ -408,11 +644,37 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 "containerFillReplacements",
                 ImmutableList.of()
         ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBooleanHotkeyed ENABLE_LITEMATICA_SHULKER_MATERIAL_RESTOCK = new ConfigBooleanHotkeyed(
+                "enableLitematicaShulkerMaterialRestock",
+                false,
+                ""
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
+        public static final ConfigBoolean LITEMATICA_SHULKER_MATERIAL_ORDERLY_STORAGE = new ConfigBoolean(
+                "litematicaShulkerMaterialOrderlyStorage",
+                false
+        ).apply(PROJECTION_TRANSLATION_PREFIX);
         public static final List<IConfigBase> OPTIONS = List.of(
                 SHOW_LITEMATICA_3D_PREVIEW,
-                ALLOW_EASY_PLACE_OPEN_CONTAINERS,
+                AUTO_DISABLE_SHADERS_FOR_3D_PREVIEW,
+                ENABLE_LITEMATICA_AREA_CLONE,
+                ALLOW_ADDING_LITEMATICA_PREVIEW_IMAGES,
+                REPLACE_LITEMATICA_PREVIEW_WITH_3D,
+                ALLOW_EASY_PLACE_VANILLA_INTERACTIONS,
+                ALLOW_EASY_PLACE_INTERACTION_SCREENS,
+                ALLOW_EASY_PLACE_REDSTONE_INTERACTIONS,
+                ALLOW_EASY_PLACE_FUNCTIONAL_BLOCK_INTERACTIONS,
+                ALLOW_EASY_PLACE_FLUID_INTERACTIONS,
+                ALLOW_EASY_PLACE_TOOL_INTERACTIONS,
+                ALLOW_EASY_PLACE_DECORATION_INTERACTIONS,
+                ALLOW_EASY_PLACE_SURVIVAL_INTERACTIONS,
+                ALLOW_EASY_PLACE_SPECIAL_INTERACTIONS,
+                ALLOW_EASY_PLACE_DANGEROUS_INTERACTIONS,
+                ALLOW_EASY_PLACE_ADMIN_INTERACTIONS,
                 HOLD_EASY_PLACE,
+                ENABLE_EASY_PLACE_ENTITIES,
+                ALLOW_CREATIVE_ENTITY_PLACEMENT,
                 HOLD_EASY_PLACE_CACHE_TIME_MS,
+                SHOW_LITEMATICA_SCHEMATIC_FOLDER_BUTTON,
                 SHOW_LITEMATICA_CONTAINER_MATERIAL_BUTTON,
                 SHOW_LITEMATICA_CONTAINER_SLOT_HINTS,
                 SHOW_LITEMATICA_CONTAINER_VERIFIER,
@@ -428,7 +690,9 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 ENABLE_CONTAINER_FILL_OVERFLOW_DROP,
                 CONTAINER_FILL_FREE_SLOTS_LIMIT,
                 CONTAINER_FILL_PROTECTED_ITEMS,
-                CONTAINER_FILL_REPLACEMENTS
+                CONTAINER_FILL_REPLACEMENTS,
+                ENABLE_LITEMATICA_SHULKER_MATERIAL_RESTOCK,
+                LITEMATICA_SHULKER_MATERIAL_ORDERLY_STORAGE
         );
 
         private ProjectionTools() {
@@ -438,7 +702,7 @@ public final class QuickCraftConfigs implements IConfigHandler {
     public static final class ModSupport {
         public static final ConfigBooleanHotkeyed ENABLE_QUICK_SHULKER = new ConfigBooleanHotkeyed(
                 "enableQuickShulker",
-                false,
+                true,
                 ""
         ).apply(MOD_SUPPORT_TRANSLATION_PREFIX);
         public static final ConfigInteger QUICK_SHULKER_ACTION_INTERVAL_TICKS = new ConfigInteger(
@@ -462,9 +726,28 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 "enableOpenConfigHotkey",
                 true
         ).apply(HOTKEY_TRANSLATION_PREFIX);
+        public static final ConfigBoolean ENABLE_ACTION_BUTTON_DRAGGING = new ConfigBoolean(
+                "enableActionButtonDragging",
+                false
+        ).apply(HOTKEY_TRANSLATION_PREFIX);
         public static final ConfigHotkey OPEN_CONFIG = new ConfigHotkey(
                 "openConfigHotkey",
                 "O",
+                INGAME_PRESS
+        ).apply(HOTKEY_TRANSLATION_PREFIX);
+        public static final ConfigHotkey OPEN_LITEMATICA_AREA_3D_PREVIEW = new ConfigHotkey(
+                "openLitematicaArea3DPreviewHotkey",
+                "LEFT_CONTROL,P",
+                INGAME_PRESS
+        ).apply(HOTKEY_TRANSLATION_PREFIX);
+        public static final ConfigHotkey CLONE_LITEMATICA_AREA = new ConfigHotkey(
+                "cloneLitematicaAreaHotkey",
+                "LEFT_CONTROL,C",
+                INGAME_PRESS
+        ).apply(HOTKEY_TRANSLATION_PREFIX);
+        public static final ConfigHotkey OPEN_EASY_PLACE_ENTITY_SELECTOR = new ConfigHotkey(
+                "openEasyPlaceEntitySelectorHotkey",
+                "LEFT_ALT,E",
                 INGAME_PRESS
         ).apply(HOTKEY_TRANSLATION_PREFIX);
         public static final ConfigHotkey SINGLE_CRAFT = new ConfigHotkey(
@@ -524,12 +807,21 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ).apply(HOTKEY_TRANSLATION_PREFIX);
         public static final ConfigHotkey TOGGLE_CONTAINER_TOOL_MODE = new ConfigHotkey(
                 "toggleContainerToolModeHotkey",
-                "F",
+                "LEFT_CONTROL,F",
                 ANY_PRESS
+        ).apply(HOTKEY_TRANSLATION_PREFIX);
+        public static final ConfigHotkey CREATIVE_PACKING = new ConfigHotkey(
+                "creativePackingHotkey",
+                "LEFT_CONTROL,G",
+                INGAME_PRESS
         ).apply(HOTKEY_TRANSLATION_PREFIX);
         public static final List<IConfigBase> OPTIONS = List.of(
                 ENABLE_OPEN_CONFIG_HOTKEY,
+                ENABLE_ACTION_BUTTON_DRAGGING,
                 OPEN_CONFIG,
+                OPEN_LITEMATICA_AREA_3D_PREVIEW,
+                CLONE_LITEMATICA_AREA,
+                OPEN_EASY_PLACE_ENTITY_SELECTOR,
                 SINGLE_CRAFT,
                 RAPID_CRAFT,
                 QUICK_SORT,
@@ -541,11 +833,15 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 SLOT_LOCK,
                 COPY_CONTAINER_TEMPLATE,
                 CONTINUOUS_CONTAINER_FILL,
-                TOGGLE_CONTAINER_TOOL_MODE
+                TOGGLE_CONTAINER_TOOL_MODE,
+                CREATIVE_PACKING
         );
 
         public static final List<IHotkey> HOTKEYS = List.of(
                 OPEN_CONFIG,
+                OPEN_LITEMATICA_AREA_3D_PREVIEW,
+                CLONE_LITEMATICA_AREA,
+                OPEN_EASY_PLACE_ENTITY_SELECTOR,
                 SINGLE_CRAFT,
                 RAPID_CRAFT,
                 QUICK_SORT,
@@ -557,7 +853,8 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 SLOT_LOCK,
                 COPY_CONTAINER_TEMPLATE,
                 CONTINUOUS_CONTAINER_FILL,
-                TOGGLE_CONTAINER_TOOL_MODE
+                TOGGLE_CONTAINER_TOOL_MODE,
+                CREATIVE_PACKING
         );
 
         private Hotkeys() {
@@ -567,24 +864,35 @@ public final class QuickCraftConfigs implements IConfigHandler {
     public static List<IHotkey> getAllHotkeys() {
         return List.of(
                 Crafting.ENABLE_WORKBENCH,
+                Crafting.ENABLE_WORKBENCH_QUICK_SHULKER,
+                Crafting.ENABLE_WORKBENCH_QUICK_SHULKER_OUTPUT,
                 Crafting.ENABLE_BACKPACK,
                 Crafting.ENABLE_STONECUTTER,
                 Crafting.ENABLE_ANVIL_RENAME,
                 Crafting.SHOW_CRAFT_ACTION_BUTTON,
                 Crafting.DROP_RESULTS_ON_STOP,
                 ContainerTools.ENABLE_QUICK_TRANSFER,
+                ContainerTools.SHOW_MATCHING_TRANSFER_HIGHLIGHT,
+                ContainerTools.ENABLE_SCROLL_TRANSFER,
                 ContainerTools.QUICK_TRANSFER_RETAIN_ONE,
                 ContainerTools.ENABLE_QUICK_THROW,
                 ContainerTools.ENABLE_QUICK_TRADE,
+                ContainerTools.ENABLE_CONTINUOUS_TRADE,
                 ContainerTools.ENABLE_FAVORITE_TRADE,
                 ContainerTools.ENABLE_QUICK_SORT,
                 ContainerTools.SHOW_CONTAINER_LOCK_BUTTON,
                 ContainerTools.SHOW_SLOT_LOCK_OVERLAY,
+                ContainerTools.ALLOW_MANUAL_LOCKED_SLOT_INTERACTION,
                 ContainerTools.ENABLE_CONTAINER_TOOL_MODE,
+                ContainerTools.ENABLE_CREATIVE_PACKING,
+                ContainerTools.ENABLE_FREE_CAMERA_ENHANCEMENT,
                 ContainerTools.ENABLE_QUICK_BEACON,
                 ProjectionTools.SHOW_LITEMATICA_3D_PREVIEW,
-                ProjectionTools.ALLOW_EASY_PLACE_OPEN_CONTAINERS,
+                ProjectionTools.ENABLE_LITEMATICA_AREA_CLONE,
+                ProjectionTools.ALLOW_EASY_PLACE_VANILLA_INTERACTIONS,
                 ProjectionTools.HOLD_EASY_PLACE,
+                ProjectionTools.ENABLE_EASY_PLACE_ENTITIES,
+                ProjectionTools.SHOW_LITEMATICA_SCHEMATIC_FOLDER_BUTTON,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_MATERIAL_BUTTON,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_SLOT_HINTS,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_VERIFIER,
@@ -592,8 +900,12 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 ProjectionTools.ENABLE_LITEMATICA_CONTAINER_AUTOFILL,
                 ProjectionTools.ENABLE_CREATIVE_CONTAINER_FILL,
                 ProjectionTools.ENABLE_CONTAINER_FILL_OVERFLOW_DROP,
+                ProjectionTools.ENABLE_LITEMATICA_SHULKER_MATERIAL_RESTOCK,
                 ModSupport.ENABLE_QUICK_SHULKER,
                 Hotkeys.OPEN_CONFIG,
+                Hotkeys.OPEN_LITEMATICA_AREA_3D_PREVIEW,
+                Hotkeys.CLONE_LITEMATICA_AREA,
+                Hotkeys.OPEN_EASY_PLACE_ENTITY_SELECTOR,
                 Hotkeys.SINGLE_CRAFT,
                 Hotkeys.RAPID_CRAFT,
                 Hotkeys.QUICK_SORT,
@@ -605,31 +917,42 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 Hotkeys.SLOT_LOCK,
                 Hotkeys.COPY_CONTAINER_TEMPLATE,
                 Hotkeys.CONTINUOUS_CONTAINER_FILL,
-                Hotkeys.TOGGLE_CONTAINER_TOOL_MODE
+                Hotkeys.TOGGLE_CONTAINER_TOOL_MODE,
+                Hotkeys.CREATIVE_PACKING
         );
     }
 
     public static List<ConfigBooleanHotkeyed> getBooleanHotkeyConfigs() {
         return List.of(
                 Crafting.ENABLE_WORKBENCH,
+                Crafting.ENABLE_WORKBENCH_QUICK_SHULKER,
+                Crafting.ENABLE_WORKBENCH_QUICK_SHULKER_OUTPUT,
                 Crafting.ENABLE_BACKPACK,
                 Crafting.ENABLE_STONECUTTER,
                 Crafting.ENABLE_ANVIL_RENAME,
                 Crafting.SHOW_CRAFT_ACTION_BUTTON,
                 Crafting.DROP_RESULTS_ON_STOP,
                 ContainerTools.ENABLE_QUICK_TRANSFER,
+                ContainerTools.ENABLE_SCROLL_TRANSFER,
                 ContainerTools.QUICK_TRANSFER_RETAIN_ONE,
                 ContainerTools.ENABLE_QUICK_THROW,
                 ContainerTools.ENABLE_QUICK_TRADE,
+                ContainerTools.ENABLE_CONTINUOUS_TRADE,
                 ContainerTools.ENABLE_FAVORITE_TRADE,
                 ContainerTools.ENABLE_QUICK_SORT,
                 ContainerTools.SHOW_CONTAINER_LOCK_BUTTON,
                 ContainerTools.SHOW_SLOT_LOCK_OVERLAY,
+                ContainerTools.ALLOW_MANUAL_LOCKED_SLOT_INTERACTION,
                 ContainerTools.ENABLE_CONTAINER_TOOL_MODE,
+                ContainerTools.ENABLE_CREATIVE_PACKING,
+                ContainerTools.ENABLE_FREE_CAMERA_ENHANCEMENT,
                 ContainerTools.ENABLE_QUICK_BEACON,
                 ProjectionTools.SHOW_LITEMATICA_3D_PREVIEW,
-                ProjectionTools.ALLOW_EASY_PLACE_OPEN_CONTAINERS,
+                ProjectionTools.ENABLE_LITEMATICA_AREA_CLONE,
+                ProjectionTools.ALLOW_EASY_PLACE_VANILLA_INTERACTIONS,
                 ProjectionTools.HOLD_EASY_PLACE,
+                ProjectionTools.ENABLE_EASY_PLACE_ENTITIES,
+                ProjectionTools.SHOW_LITEMATICA_SCHEMATIC_FOLDER_BUTTON,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_MATERIAL_BUTTON,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_SLOT_HINTS,
                 ProjectionTools.SHOW_LITEMATICA_CONTAINER_VERIFIER,
@@ -637,6 +960,7 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 ProjectionTools.ENABLE_LITEMATICA_CONTAINER_AUTOFILL,
                 ProjectionTools.ENABLE_CREATIVE_CONTAINER_FILL,
                 ProjectionTools.ENABLE_CONTAINER_FILL_OVERFLOW_DROP,
+                ProjectionTools.ENABLE_LITEMATICA_SHULKER_MATERIAL_RESTOCK,
                 ModSupport.ENABLE_QUICK_SHULKER
         );
     }
@@ -655,7 +979,31 @@ public final class QuickCraftConfigs implements IConfigHandler {
     }
 
     public static boolean isWorkbenchQuickCraftEnabled() {
+        return Crafting.ENABLE_WORKBENCH.getBooleanValue()
+                && !isWorkbenchQuickCraftWithQuickShulkerEnabled();
+    }
+
+    public static boolean isWorkbenchQuickCraftFeatureEnabled() {
         return Crafting.ENABLE_WORKBENCH.getBooleanValue();
+    }
+
+    public static boolean isWorkbenchQuickShulkerCraftEnabled() {
+        return isWorkbenchQuickCraftFeatureEnabled()
+                && isWorkbenchQuickCraftWithQuickShulkerEnabled();
+    }
+
+    public static boolean isWorkbenchQuickCraftWithQuickShulkerEnabled() {
+        return Crafting.ENABLE_WORKBENCH_QUICK_SHULKER.getBooleanValue()
+                && ModSupport.ENABLE_QUICK_SHULKER.getBooleanValue();
+    }
+
+    public static boolean isWorkbenchQuickCraftOutputToShulkerEnabled() {
+        return Crafting.ENABLE_WORKBENCH_QUICK_SHULKER_OUTPUT.getBooleanValue();
+    }
+
+    public static WorkbenchShulkerPipelineMode getWorkbenchQuickShulkerPipelineMode() {
+        return (WorkbenchShulkerPipelineMode)
+                Crafting.WORKBENCH_QUICK_SHULKER_PIPELINE_MODE.getOptionListValue();
     }
 
     public static boolean isBackpackQuickCraftEnabled() {
@@ -682,12 +1030,24 @@ public final class QuickCraftConfigs implements IConfigHandler {
         return ContainerTools.ENABLE_QUICK_TRANSFER.getBooleanValue();
     }
 
+    public static boolean isMatchingTransferHighlightEnabled() {
+        return ContainerTools.SHOW_MATCHING_TRANSFER_HIGHLIGHT.getBooleanValue();
+    }
+
+    public static boolean isScrollTransferEnabled() {
+        return ContainerTools.ENABLE_SCROLL_TRANSFER.getBooleanValue();
+    }
+
     public static boolean isQuickThrowEnabled() {
         return ContainerTools.ENABLE_QUICK_THROW.getBooleanValue();
     }
 
     public static boolean isQuickTradeEnabled() {
         return ContainerTools.ENABLE_QUICK_TRADE.getBooleanValue();
+    }
+
+    public static boolean isContinuousTradeEnabled() {
+        return ContainerTools.ENABLE_CONTINUOUS_TRADE.getBooleanValue();
     }
 
     public static boolean isFavoriteTradeEnabled() {
@@ -698,6 +1058,22 @@ public final class QuickCraftConfigs implements IConfigHandler {
         return ContainerTools.ENABLE_QUICK_SORT.getBooleanValue();
     }
 
+    public static List<String> getQuickSortTopPriorityItems() {
+        return ContainerTools.QUICK_SORT_TOP_PRIORITY_ITEMS.getStrings();
+    }
+
+    public static List<String> getQuickSortBottomPriorityItems() {
+        return ContainerTools.QUICK_SORT_BOTTOM_PRIORITY_ITEMS.getStrings();
+    }
+
+    public static boolean areQuickSortShulkerBoxesAtEnd() {
+        return ContainerTools.QUICK_SORT_SHULKER_BOXES_AT_END.getBooleanValue();
+    }
+
+    public static boolean areQuickSortBundlesAtEnd() {
+        return ContainerTools.QUICK_SORT_BUNDLES_AT_END.getBooleanValue();
+    }
+
     public static boolean isContainerToolModeEnabled() {
         return ContainerTools.ENABLE_CONTAINER_TOOL_MODE.getBooleanValue();
     }
@@ -705,6 +1081,10 @@ public final class QuickCraftConfigs implements IConfigHandler {
     public static boolean isQuickStashEnabled() {
         return isContainerToolModeEnabled()
                 && ContainerTools.CONTAINER_TOOL_MODE.getOptionListValue() == ContainerToolMode.QUICK_STASH;
+    }
+
+    public static boolean isQuickStashButtonVisible() {
+        return ContainerTools.SHOW_QUICK_STASH_BUTTON.getBooleanValue();
     }
 
     public static boolean isAutoCollectMaterialsEnabled() {
@@ -721,6 +1101,19 @@ public final class QuickCraftConfigs implements IConfigHandler {
 
     public static boolean isLitematicaContainerAutofillWithQuickShulkerEnabled() {
         return ModSupport.ENABLE_QUICK_SHULKER.getBooleanValue();
+    }
+
+    public static boolean isLitematicaShulkerMaterialRestockEnabled() {
+        return ProjectionTools.ENABLE_LITEMATICA_SHULKER_MATERIAL_RESTOCK.getBooleanValue();
+    }
+
+    public static boolean isLitematicaShulkerMaterialRestockWithQuickShulkerEnabled() {
+        return isLitematicaShulkerMaterialRestockEnabled()
+                && ModSupport.ENABLE_QUICK_SHULKER.getBooleanValue();
+    }
+
+    public static boolean isLitematicaShulkerMaterialOrderlyStorageEnabled() {
+        return ProjectionTools.LITEMATICA_SHULKER_MATERIAL_ORDERLY_STORAGE.getBooleanValue();
     }
 
     public static boolean isCreativeContainerFillEnabled() {
@@ -800,8 +1193,36 @@ public final class QuickCraftConfigs implements IConfigHandler {
                 && ContainerTools.CONTAINER_TOOL_MODE.getOptionListValue() == ContainerToolMode.QUICK_COPY;
     }
 
+    public static boolean isCreativePackingEnabled() {
+        return ContainerTools.ENABLE_CREATIVE_PACKING.getBooleanValue();
+    }
+
+    public static int getCreativePackingBundleStacks() {
+        return ContainerTools.CREATIVE_PACKING_BUNDLE_STACKS.getIntegerValue();
+    }
+
+    public static boolean areCreativePackingNestedContainersAllowed() {
+        return ContainerTools.ALLOW_CREATIVE_PACKING_NESTED_CONTAINERS.getBooleanValue();
+    }
+
     public static boolean isQuickBeaconEnabled() {
         return ContainerTools.ENABLE_QUICK_BEACON.getBooleanValue();
+    }
+
+    public static boolean isFreeCameraEnhancementEnabled() {
+        return ContainerTools.ENABLE_FREE_CAMERA_ENHANCEMENT.getBooleanValue();
+    }
+
+    public static boolean areFreeCameraBlockInteractionsEnabled() {
+        return ContainerTools.FREE_CAMERA_BLOCK_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areFreeCameraEntityInteractionsEnabled() {
+        return ContainerTools.FREE_CAMERA_ENTITY_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean isFreeCameraEasyPlaceEnabled() {
+        return ContainerTools.FREE_CAMERA_EASY_PLACE.getBooleanValue();
     }
 
     public static List<String> getBeaconEffectOrderStrings() {
@@ -816,12 +1237,76 @@ public final class QuickCraftConfigs implements IConfigHandler {
         return ContainerTools.SHOW_SLOT_LOCK_OVERLAY.getBooleanValue();
     }
 
-    public static boolean isEasyPlaceOpenContainersAllowed() {
-        return ProjectionTools.ALLOW_EASY_PLACE_OPEN_CONTAINERS.getBooleanValue();
+    public static boolean areManualLockedSlotInteractionsAllowed() {
+        return ContainerTools.ALLOW_MANUAL_LOCKED_SLOT_INTERACTION.getBooleanValue();
+    }
+    public static boolean shouldAutoDisableShadersFor3DPreview() {
+        return ProjectionTools.AUTO_DISABLE_SHADERS_FOR_3D_PREVIEW.getBooleanValue();
+    }
+    public static boolean isLitematicaAreaCloneEnabled() {
+        return ProjectionTools.ENABLE_LITEMATICA_AREA_CLONE.getBooleanValue();
+    }
+    public static boolean canAddLitematicaPreviewImages() {
+        return ProjectionTools.ALLOW_ADDING_LITEMATICA_PREVIEW_IMAGES.getBooleanValue();
+    }
+
+    public static boolean shouldReplaceLitematicaPreviewWith3D() {
+        return ProjectionTools.REPLACE_LITEMATICA_PREVIEW_WITH_3D.getBooleanValue();
+    }
+    public static boolean areEasyPlaceVanillaInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_VANILLA_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceInteractionScreensAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_INTERACTION_SCREENS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceRedstoneInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_REDSTONE_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceFunctionalBlockInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_FUNCTIONAL_BLOCK_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceFluidInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_FLUID_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceToolInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_TOOL_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceDecorationInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_DECORATION_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceSurvivalInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_SURVIVAL_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceSpecialInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_SPECIAL_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceDangerousInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_DANGEROUS_INTERACTIONS.getBooleanValue();
+    }
+
+    public static boolean areEasyPlaceAdminInteractionsAllowed() {
+        return ProjectionTools.ALLOW_EASY_PLACE_ADMIN_INTERACTIONS.getBooleanValue();
     }
 
     public static boolean isHoldEasyPlaceEnabled() {
         return ProjectionTools.HOLD_EASY_PLACE.getBooleanValue();
+    }
+
+    public static boolean isEasyPlaceEntitiesEnabled() {
+        return ProjectionTools.ENABLE_EASY_PLACE_ENTITIES.getBooleanValue();
+    }
+
+    public static boolean isCreativeEntityPlacementAllowed() {
+        return ProjectionTools.ALLOW_CREATIVE_ENTITY_PLACEMENT.getBooleanValue();
     }
 
     public static int getHoldEasyPlaceCacheTimeMs() {
@@ -831,6 +1316,10 @@ public final class QuickCraftConfigs implements IConfigHandler {
             ProjectionTools.HOLD_EASY_PLACE_CACHE_TIME_MS.setIntegerValue(clamped);
         }
         return clamped;
+    }
+
+    public static boolean isLitematicaSchematicFolderButtonVisible() {
+        return ProjectionTools.SHOW_LITEMATICA_SCHEMATIC_FOLDER_BUTTON.getBooleanValue();
     }
 
     public static boolean isLitematicaContainerMaterialListButtonVisible() {
@@ -863,6 +1352,26 @@ public final class QuickCraftConfigs implements IConfigHandler {
         return Hotkeys.ENABLE_OPEN_CONFIG_HOTKEY.getBooleanValue();
     }
 
+    public static boolean isActionButtonDraggingEnabled() {
+        return Hotkeys.ENABLE_ACTION_BUTTON_DRAGGING.getBooleanValue();
+    }
+
+    public static ButtonOffset getActionButtonOffset(String key) {
+        return BUTTON_OFFSETS.getOrDefault(key, ButtonOffset.ZERO);
+    }
+
+    public static void setActionButtonOffset(String key, int x, int y) {
+        if (x == 0 && y == 0) {
+            BUTTON_OFFSETS.remove(key);
+        } else {
+            BUTTON_OFFSETS.put(key, new ButtonOffset(x, y));
+        }
+    }
+
+    public static void resetActionButtonOffset(String key) {
+        BUTTON_OFFSETS.remove(key);
+    }
+
     public static IKeybind getSingleCraftHotkey() {
         return Hotkeys.SINGLE_CRAFT.getKeybind();
     }
@@ -876,6 +1385,7 @@ public final class QuickCraftConfigs implements IConfigHandler {
     }
 
     public static void loadFromFile() {
+        BUTTON_OFFSETS.clear();
         Path configFile = FileUtils.getConfigDirectory().resolve(CONFIG_FILE_NAME);
 
         if (!Files.exists(configFile) || !Files.isReadable(configFile)) {
@@ -893,6 +1403,15 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ConfigUtils.readConfigBase(root, "ProjectionTools", ProjectionTools.OPTIONS);
         ConfigUtils.readConfigBase(root, "ModSupport", ModSupport.OPTIONS);
         ConfigUtils.readConfigBase(root, "Hotkeys", Hotkeys.OPTIONS);
+        readButtonPositions(root);
+
+        JsonObject crafting = root.getAsJsonObject("Crafting");
+        if (crafting != null
+                && !crafting.has("workbenchQuickShulkerPipelineMode")
+                && getLegacyEnabledValue(crafting.get("enableWorkbenchQuickShulkerUltraFast"))) {
+            Crafting.WORKBENCH_QUICK_SHULKER_PIPELINE_MODE.setOptionListValue(
+                    WorkbenchShulkerPipelineMode.COMBINED_ULTRA);
+        }
 
         JsonObject containerTools = root.getAsJsonObject("ContainerTools");
         if (containerTools != null) {
@@ -939,7 +1458,44 @@ public final class QuickCraftConfigs implements IConfigHandler {
         ConfigUtils.writeConfigBase(root, "ProjectionTools", ProjectionTools.OPTIONS);
         ConfigUtils.writeConfigBase(root, "ModSupport", ModSupport.OPTIONS);
         ConfigUtils.writeConfigBase(root, "Hotkeys", Hotkeys.OPTIONS);
+        writeButtonPositions(root);
         JsonUtils.writeJsonToFile(root, dir.resolve(CONFIG_FILE_NAME));
+    }
+
+    private static void readButtonPositions(JsonObject root) {
+        BUTTON_OFFSETS.clear();
+        JsonObject positions = root.getAsJsonObject(BUTTON_POSITIONS_KEY);
+        if (positions == null) {
+            return;
+        }
+        for (Map.Entry<String, JsonElement> entry : positions.entrySet()) {
+            if (!entry.getValue().isJsonObject()) {
+                continue;
+            }
+            JsonObject offset = entry.getValue().getAsJsonObject();
+            JsonElement x = offset.get("x");
+            JsonElement y = offset.get("y");
+            if (x != null && y != null
+                    && x.isJsonPrimitive() && x.getAsJsonPrimitive().isNumber()
+                    && y.isJsonPrimitive() && y.getAsJsonPrimitive().isNumber()) {
+                BUTTON_OFFSETS.put(entry.getKey(), new ButtonOffset(x.getAsInt(), y.getAsInt()));
+            }
+        }
+    }
+
+    private static void writeButtonPositions(JsonObject root) {
+        JsonObject positions = new JsonObject();
+        BUTTON_OFFSETS.forEach((key, offset) -> {
+            JsonObject value = new JsonObject();
+            value.addProperty("x", offset.x());
+            value.addProperty("y", offset.y());
+            positions.add(key, value);
+        });
+        root.add(BUTTON_POSITIONS_KEY, positions);
+    }
+
+    public record ButtonOffset(int x, int y) {
+        private static final ButtonOffset ZERO = new ButtonOffset(0, 0);
     }
 
     private static void applyLegacyContainerToolMappings(JsonObject containerTools) {

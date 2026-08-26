@@ -1,10 +1,13 @@
 package com.yiyihehe.quickcraft.malilib;
 
+import com.yiyihehe.quickcraft.QuickCraft;
 import com.yiyihehe.quickcraft.QuickContainerCopy;
+import com.yiyihehe.quickcraft.QuickCreativePacking;
 import com.yiyihehe.quickcraft.QuickThrow;
 import com.yiyihehe.quickcraft.QuickTransfer;
 import com.yiyihehe.quickcraft.config.QuickCraftConfigs;
 import com.yiyihehe.quickcraft.gui.QuickCraftConfigScreen;
+import com.yiyihehe.quickcraft.render.QuickDraggableButton;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.hotkeys.IKeybind;
 import fi.dy.masa.malilib.hotkeys.KeyAction;
@@ -38,6 +41,9 @@ public final class QuickCraftHotkeyCallbacks {
         QuickCraftConfigs.Hotkeys.COPY_CONTAINER_TEMPLATE.getKeybind().setCallback(QuickCraftHotkeyCallbacks::handleCopyContainerTemplate);
         QuickCraftConfigs.Hotkeys.CONTINUOUS_CONTAINER_FILL.getKeybind().setCallback(QuickCraftHotkeyCallbacks::handleContinuousContainerFill);
         QuickCraftConfigs.Hotkeys.TOGGLE_CONTAINER_TOOL_MODE.getKeybind().setCallback(QuickCraftHotkeyCallbacks::handleToggleContainerToolMode);
+        QuickCraftConfigs.Hotkeys.CREATIVE_PACKING.getKeybind().setCallback(QuickCraftHotkeyCallbacks::handleCreativePacking);
+        QuickCraftConfigs.Hotkeys.OPEN_EASY_PLACE_ENTITY_SELECTOR.getKeybind().setCallback(QuickCraftHotkeyCallbacks::handleEntitySelector);
+        QuickCraft.bindOptionalHotkeys();
     }
 
     private static boolean handleOpenConfig(KeyAction action, IKeybind keybind) {
@@ -71,15 +77,21 @@ public final class QuickCraftHotkeyCallbacks {
     }
 
     private static boolean handleQuickTransfer(KeyAction action, IKeybind keybind) {
-        return action == KeyAction.PRESS && QuickTransfer.handleQuickTransferHotkey();
+        return action == KeyAction.PRESS
+                && !QuickDraggableButton.isEditGestureOverCurrentButton()
+                && QuickTransfer.handleQuickTransferHotkey();
     }
 
     private static boolean handleQuickTransferRetainOne(KeyAction action, IKeybind keybind) {
-        return action == KeyAction.PRESS && QuickTransfer.handleQuickTransferRetainOneHotkey();
+        return action == KeyAction.PRESS
+                && !QuickDraggableButton.isEditGestureOverCurrentButton()
+                && QuickTransfer.handleQuickTransferRetainOneHotkey();
     }
 
     private static boolean handleSlotQuickTransfer(KeyAction action, IKeybind keybind) {
-        return action == KeyAction.PRESS && QuickTransfer.handleSlotQuickTransferHotkey();
+        return action == KeyAction.PRESS
+                && !QuickDraggableButton.isEditGestureOverCurrentButton()
+                && QuickTransfer.handleSlotQuickTransferHotkey();
     }
 
     private static boolean handleSlotLock(KeyAction action, IKeybind keybind) {
@@ -108,12 +120,21 @@ public final class QuickCraftHotkeyCallbacks {
         return true;
     }
 
+    private static boolean handleCreativePacking(KeyAction action, IKeybind keybind) {
+        return action == KeyAction.PRESS && QuickCreativePacking.handleHotkey(MinecraftClient.getInstance());
+    }
+
+    private static boolean handleEntitySelector(KeyAction action, IKeybind keybind) {
+        return action == KeyAction.PRESS
+                && QuickCraft.openEasyPlaceEntitySelector(MinecraftClient.getInstance());
+    }
+
     private static boolean isCraftingHotkeyContext(MinecraftClient client) {
         if (client == null || QuickCraftConfigScreen.isOpen(client)) {
             return false;
         }
 
-        if (QuickCraftConfigs.isWorkbenchQuickCraftEnabled() && client.currentScreen instanceof CraftingScreen) {
+        if (QuickCraftConfigs.isWorkbenchQuickCraftFeatureEnabled() && client.currentScreen instanceof CraftingScreen) {
             return true;
         }
         if (QuickCraftConfigs.isBackpackQuickCraftEnabled() && client.currentScreen instanceof InventoryScreen) {

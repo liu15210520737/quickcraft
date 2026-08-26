@@ -8,13 +8,14 @@
   "contact": {},
   "license": "MIT",
   "icon": "assets/quickcraft/icon.png",
-  "environment": "*",
+  "environment": "client",
   "entrypoints": {
     "main": [
       "com.yiyihehe.quickcraft.QuickCraft"
     ],
     "client": [
       "com.yiyihehe.quickcraft.crafting.QuickCraftWorkbench",
+      "com.yiyihehe.quickcraft.crafting.QuickCraftWorkbenchShulkerCraft",
       "com.yiyihehe.quickcraft.crafting.QuickCraftStonecutter",
       "com.yiyihehe.quickcraft.crafting.QuickCraftBackpack",
       "com.yiyihehe.quickcraft.crafting.QuickCraftAnvilRename",
@@ -28,7 +29,9 @@
       "com.yiyihehe.quickcraft.QuickContainerLock",
       "com.yiyihehe.quickcraft.QuickContainerCopy",
       "com.yiyihehe.quickcraft.QuickMaterialCollector",
-      "com.yiyihehe.quickcraft.litematica.QuickLitematicaContainerAutofill"
+      "com.yiyihehe.quickcraft.litematica.QuickLitematicaContainerAutofill",
+      "com.yiyihehe.quickcraft.QuickEntityPlacementClient",
+      "com.yiyihehe.quickcraft.litematica.QuickLitematicaShulkerMaterialRestock"
     ],
     "modmenu": [
       "com.yiyihehe.quickcraft.gui.QuickCraftModMenuIntegration"

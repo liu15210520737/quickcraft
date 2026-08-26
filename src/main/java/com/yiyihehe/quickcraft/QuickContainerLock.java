@@ -7,6 +7,7 @@ import com.yiyihehe.quickcraft.config.QuickCraftConfigs;
 import com.yiyihehe.quickcraft.mixin.CreativeSlotAccessor;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.BarrelBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.ChestBlock;
@@ -18,6 +19,8 @@ import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.BlockItem;
+import net.minecraft.item.ItemStack;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
@@ -33,6 +36,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * 容器锁：
@@ -59,6 +63,7 @@ public final class QuickContainerLock implements ClientModInitializer {
     private static final int AUTO_ELYTRA_SESSION_CLICK_COUNT = 3;
     private static final int AUTO_ELYTRA_LINGER_TICKS = 2;
     private static final String PLAYER_CONTAINER_KEY = "player_inventory";
+    private static final String QUICK_SHULKER_CONTAINER_KEY_PREFIX = "quickshulker:";
     private static final String TWEAKEROO_ELYTRA_SWAP_CLASS = "fi.dy.masa.tweakeroo.util.InventoryUtils";
     private static final String TWEAKEROO_ELYTRA_SWAP_METHOD = "swapElytraAndChestPlate";
     private static final String TWEAKEROO_EQUIP_BEST_ELYTRA_METHOD = "equipBestElytra";
@@ -75,8 +80,11 @@ public final class QuickContainerLock implements ClientModInitializer {
     private static boolean lastUseDown;
     private static int pendingTicks;
     private static String pendingContainerKey;
+    private static boolean pendingShulkerBoxOpen;
+    private static int pendingSourceSyncId = INVALID_LOCK_SLOT;
     private static String currentScreenContainerKey;
     private static boolean bypassPlayerSlotLocks;
+    private static int scopedPlayerSlotLockBypassDepth;
     private static final Set<Integer> activeAutoElytraPlayerSlots = new HashSet<>();
     private static final Set<Integer> pendingAutoElytraPlayerSlots = new HashSet<>();
     private static int activeAutoElytraHotbarIndex = INVALID_LOCK_SLOT;
@@ -120,19 +128,36 @@ public final class QuickContainerLock implements ClientModInitializer {
                 || screen.getScreenHandler() instanceof PlayerScreenHandler) {
             currentScreenContainerKey = PLAYER_CONTAINER_KEY;
             rememberHandlerKey(screen.getScreenHandler(), PLAYER_CONTAINER_KEY);
-            pendingContainerKey = null;
+            clearPendingContainerOpen();
+            return;
+        }
+
+        if (isPendingContainerScreen(screen.getScreenHandler())) {
+            currentScreenContainerKey = pendingContainerKey;
+            rememberHandlerKey(screen.getScreenHandler(), currentScreenContainerKey);
+            clearPendingContainerOpen();
+        }
+    }
+
+    public static void prepareQuickShulkerOpen(HandledScreen<?> screen, double mouseX, double mouseY, int guiLeft, int guiTop) {
+        if (!FabricLoader.getInstance().isModLoaded("quickshulker")) {
+            return;
+        }
+
+        for (Slot slot : screen.getScreenHandler().slots) {
+            Slot effectiveSlot = unwrapCreativeSlot(slot);
+            if (!isPlayerStorageSlot(effectiveSlot)
+                    || !isMouseOverSlot(slot, guiLeft, guiTop, mouseX, mouseY)
+                    || !isShulkerBoxItem(effectiveSlot.getStack())) {
+                continue;
+            }
+
+            pendingContainerKey = QUICK_SHULKER_CONTAINER_KEY_PREFIX + effectiveSlot.getIndex();
+            pendingShulkerBoxOpen = true;
+            pendingSourceSyncId = screen.getScreenHandler().syncId;
             pendingTicks = 0;
             return;
         }
-
-        if (pendingContainerKey == null || !isContainerSlotLockSupportedHandler(screen.getScreenHandler())) {
-            return;
-        }
-
-        currentScreenContainerKey = pendingContainerKey;
-        rememberHandlerKey(screen.getScreenHandler(), currentScreenContainerKey);
-        pendingContainerKey = null;
-        pendingTicks = 0;
     }
 
     public static Text getLockButtonText(HandledScreen<?> screen) {
@@ -334,14 +359,17 @@ public final class QuickContainerLock implements ClientModInitializer {
         }
 
         if (isLockedSlot(handler, slotId)) {
-            return true;
+            return !QuickCraftConfigs.areManualLockedSlotInteractionsAllowed()
+                    || actionType == SlotActionType.THROW;
         }
 
-        return actionType == SlotActionType.SWAP && isLockedHotbarSwapTarget(handler, button);
+        return !QuickCraftConfigs.areManualLockedSlotInteractionsAllowed()
+                && actionType == SlotActionType.SWAP
+                && isLockedHotbarSwapTarget(handler, button);
     }
 
     public static void beginSlotClickContext(ScreenHandler handler, int slotId, int button, SlotActionType actionType) {
-        bypassPlayerSlotLocks = false;
+        bypassPlayerSlotLocks = scopedPlayerSlotLockBypassDepth > 0;
         activeAutoElytraPlayerSlots.clear();
         activeAutoElytraHotbarIndex = INVALID_LOCK_SLOT;
 
@@ -356,9 +384,31 @@ public final class QuickContainerLock implements ClientModInitializer {
     }
 
     public static void endSlotClickContext() {
-        bypassPlayerSlotLocks = false;
+        bypassPlayerSlotLocks = scopedPlayerSlotLockBypassDepth > 0;
         activeAutoElytraPlayerSlots.clear();
         activeAutoElytraHotbarIndex = INVALID_LOCK_SLOT;
+    }
+
+    public static void runWithPlayerSlotLocksBypassed(Runnable action) {
+        scopedPlayerSlotLockBypassDepth++;
+        bypassPlayerSlotLocks = true;
+        try {
+            action.run();
+        } finally {
+            scopedPlayerSlotLockBypassDepth--;
+            bypassPlayerSlotLocks = scopedPlayerSlotLockBypassDepth > 0;
+        }
+    }
+
+    public static <T> T callWithPlayerSlotLocksBypassed(Supplier<T> action) {
+        scopedPlayerSlotLockBypassDepth++;
+        bypassPlayerSlotLocks = true;
+        try {
+            return action.get();
+        } finally {
+            scopedPlayerSlotLockBypassDepth--;
+            bypassPlayerSlotLocks = scopedPlayerSlotLockBypassDepth > 0;
+        }
     }
 
     private static boolean isLockedSlotInternal(ScreenHandler handler, Slot slot) {
@@ -616,6 +666,11 @@ public final class QuickContainerLock implements ClientModInitializer {
                 && mouseY < slotTop + SLOT_SIZE;
     }
 
+    private static boolean isShulkerBoxItem(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem blockItem
+                && blockItem.getBlock() instanceof ShulkerBoxBlock;
+    }
+
     public static void renderHotbarLocks(DrawContext context) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null
@@ -677,6 +732,8 @@ public final class QuickContainerLock implements ClientModInitializer {
             String containerKey = getSupportedContainerKey(client, blockHitResult);
             if (containerKey != null) {
                 pendingContainerKey = containerKey;
+                pendingShulkerBoxOpen = false;
+                pendingSourceSyncId = INVALID_LOCK_SLOT;
                 pendingTicks = 0;
             }
         }
@@ -690,18 +747,15 @@ public final class QuickContainerLock implements ClientModInitializer {
         }
 
         pendingTicks++;
-        if (client.currentScreen instanceof HandledScreen<?> screen
-                && isContainerSlotLockSupportedHandler(screen.getScreenHandler())) {
+        if (client.currentScreen instanceof HandledScreen<?> screen && isPendingContainerScreen(screen.getScreenHandler())) {
             currentScreenContainerKey = pendingContainerKey;
             rememberHandlerKey(screen.getScreenHandler(), currentScreenContainerKey);
-            pendingContainerKey = null;
-            pendingTicks = 0;
+            clearPendingContainerOpen();
             return;
         }
 
         if (pendingTicks > OPEN_TIMEOUT_TICKS) {
-            pendingContainerKey = null;
-            pendingTicks = 0;
+            clearPendingContainerOpen();
         }
     }
 
@@ -825,6 +879,20 @@ public final class QuickContainerLock implements ClientModInitializer {
                 || handler instanceof ShulkerBoxScreenHandler;
     }
 
+    private static boolean isPendingContainerScreen(ScreenHandler handler) {
+        return pendingContainerKey != null
+                && isContainerSlotLockSupportedHandler(handler)
+                && (!pendingShulkerBoxOpen || handler instanceof ShulkerBoxScreenHandler)
+                && (pendingSourceSyncId == INVALID_LOCK_SLOT || handler.syncId != pendingSourceSyncId);
+    }
+
+    private static void clearPendingContainerOpen() {
+        pendingContainerKey = null;
+        pendingShulkerBoxOpen = false;
+        pendingSourceSyncId = INVALID_LOCK_SLOT;
+        pendingTicks = 0;
+    }
+
     private static String getSupportedContainerKey(MinecraftClient client, BlockHitResult blockHitResult) {
         World world = client.world;
         if (world == null) {
@@ -873,11 +941,11 @@ public final class QuickContainerLock implements ClientModInitializer {
         LOCKED_PLAYER_SLOTS.clear();
         LOCKED_CONTAINER_SLOTS.clear();
         SYNC_ID_TO_CONTAINER_KEY.clear();
-        pendingContainerKey = null;
         currentScreenContainerKey = null;
-        pendingTicks = 0;
+        clearPendingContainerOpen();
         lastUseDown = false;
         bypassPlayerSlotLocks = false;
+        scopedPlayerSlotLockBypassDepth = 0;
         activeAutoElytraPlayerSlots.clear();
         pendingAutoElytraPlayerSlots.clear();
         activeAutoElytraHotbarIndex = INVALID_LOCK_SLOT;

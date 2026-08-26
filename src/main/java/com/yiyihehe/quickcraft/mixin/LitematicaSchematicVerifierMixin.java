@@ -29,6 +29,7 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.inventory.Inventory;
+import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
@@ -117,6 +118,9 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
     private final Set<BlockPos> quickcraft$pendingContainerPositions = new HashSet<>();
 
     @Unique
+    private final Map<BlockPos, List<ItemStack>> quickcraft$missingContainerStacks = new HashMap<>();
+
+    @Unique
     private final Set<ChunkPos> quickcraft$requestedContainerDataChunks = new HashSet<>();
 
     @Unique
@@ -129,6 +133,28 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
         }
 
         return Collections.unmodifiableList(this.quickcraft$selectedContainerMismatches);
+    }
+
+    @Override
+    public List<ContainerMismatch> quickcraft$getContainerMismatches() {
+        if (!QuickLitematicaContainerVerifier.isEnabled()) {
+            return List.of();
+        }
+
+        return Collections.unmodifiableList(new ArrayList<>(this.quickcraft$containerMismatchesByKey.values()));
+    }
+
+    @Override
+    public List<ItemStack> quickcraft$getMissingContainerStacks() {
+        if (!QuickLitematicaContainerVerifier.isEnabled()) {
+            return List.of();
+        }
+
+        List<ItemStack> stacks = new ArrayList<>();
+        for (List<ItemStack> containerStacks : this.quickcraft$missingContainerStacks.values()) {
+            containerStacks.forEach(stack -> stacks.add(stack.copy()));
+        }
+        return Collections.unmodifiableList(stacks);
     }
 
     @Override
@@ -235,9 +261,8 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
 
         BlockPos pos = MUTABLE_POS.toImmutable();
         World foundWorld = fi.dy.masa.malilib.util.WorldUtils.getBestWorld(MinecraftClient.getInstance());
-        BlockEntity expectedBlockEntity = chunkSchematic.getBlockEntity(pos);
 
-        if (foundWorld == null || !(expectedBlockEntity instanceof Inventory)) {
+        if (foundWorld == null) {
             return;
         }
 
@@ -520,10 +545,22 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
     ) {
         BlockEntity expectedBlockEntity = chunkSchematic.getBlockEntity(pos);
         BlockEntity foundBlockEntity = chunkClient.getBlockEntity(pos);
+        ExpectedContainer expectedContainer = QuickLitematicaContainerVerifier.getExpectedContainerPartAt(
+                this.schematicPlacement,
+                pos
+        );
+        Inventory directExpectedInventory = expectedBlockEntity instanceof Inventory inventory ? inventory : null;
 
-        if (!(expectedBlockEntity instanceof Inventory expectedInventory)) {
+        if (expectedContainer == null && directExpectedInventory == null) {
             return List.of();
         }
+
+        Inventory expected = expectedContainer != null
+                ? expectedContainer.inventory()
+                : QuickLitematicaContainerVerifier.getExpectedInventory(expectedBlockEntity, directExpectedInventory);
+        BlockEntity expectedData = expectedContainer != null
+                ? expectedContainer.blockEntity()
+                : expectedBlockEntity;
 
         if (!(foundBlockEntity instanceof Inventory foundInventory)) {
             if (!fi.dy.masa.litematica.data.DataManager.getInstance().hasIntegratedServer()) {
@@ -533,10 +570,11 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
                 }
             }
 
+            this.quickcraft$rememberMissingContainer(pos, expected);
             return List.of();
         }
 
-        Inventory expected = QuickLitematicaContainerVerifier.getExpectedInventory(expectedBlockEntity, expectedInventory);
+        this.quickcraft$missingContainerStacks.remove(pos);
         Inventory found = QuickLitematicaContainerVerifier.getActualInventory(
                 foundWorld,
                 pos,
@@ -549,11 +587,13 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
 
         List<ContainerMismatch> mismatches = QuickLitematicaContainerVerifier.findMismatches(
                 pos,
-                chunkSchematic.getBlockState(pos),
+                expectedContainer != null ? expectedContainer.state() : chunkSchematic.getBlockState(pos),
                 chunkClient.getBlockState(pos),
-                expectedBlockEntity,
+                expectedData,
                 foundBlockEntity,
-                QuickLitematicaContainerVerifier.getDisabledSlots(expectedBlockEntity),
+                expectedContainer != null
+                        ? expectedContainer.disabledSlots()
+                        : QuickLitematicaContainerVerifier.getDisabledSlots(expectedBlockEntity),
                 QuickLitematicaContainerVerifier.getDisabledSlots(foundBlockEntity),
                 expected,
                 found
@@ -567,7 +607,11 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
             return null;
         }
 
-        ExpectedContainer expected = QuickLitematicaContainerVerifier.getExpectedContainerAt(foundWorld, pos);
+        ExpectedContainer expected = QuickLitematicaContainerVerifier.getExpectedContainerAt(
+                foundWorld,
+                pos,
+                this.schematicPlacement
+        );
         BlockEntity foundBlockEntity = foundWorld.getBlockEntity(pos);
 
         if (expected == null) {
@@ -582,8 +626,18 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
                 }
             }
 
+            ExpectedContainer expectedPart = QuickLitematicaContainerVerifier.getExpectedContainerPartAt(
+                    this.schematicPlacement,
+                    pos
+            );
+            this.quickcraft$rememberMissingContainer(
+                    pos,
+                    expectedPart != null ? expectedPart.inventory() : expected.inventory()
+            );
             return List.of();
         }
+
+        this.quickcraft$missingContainerStacks.remove(pos);
 
         Inventory found = QuickLitematicaContainerVerifier.getActualInventory(
                 foundWorld,
@@ -616,12 +670,18 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
             Inventory found,
             Set<Integer> foundDisabledSlots
     ) {
-        ExpectedContainer expected = QuickLitematicaContainerVerifier.getExpectedContainerAt(foundWorld, pos);
+        ExpectedContainer expected = QuickLitematicaContainerVerifier.getExpectedContainerAt(
+                foundWorld,
+                pos,
+                this.schematicPlacement
+        );
         BlockEntity foundBlockEntity = foundWorld.getBlockEntity(pos);
 
         if (expected == null) {
             return List.of();
         }
+
+        this.quickcraft$missingContainerStacks.remove(pos);
 
         if (found.size() != expected.inventory().size()) {
             return null;
@@ -696,6 +756,7 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
         this.quickcraft$expectedContainerPositions.clear();
         this.quickcraft$checkedContainerPositions.clear();
         this.quickcraft$pendingContainerPositions.clear();
+        this.quickcraft$missingContainerStacks.clear();
         this.quickcraft$requestedContainerDataChunks.clear();
         this.selectedCategories.removeIf(QuickLitematicaContainerVerifier::isContainerMismatchType);
         this.selectedEntries.keySet().removeIf(QuickLitematicaContainerVerifier::isContainerMismatchType);
@@ -814,7 +875,20 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
         BlockPos immutablePos = pos.toImmutable();
         this.quickcraft$expectedContainerPositions.add(immutablePos);
         this.quickcraft$checkedContainerPositions.remove(pos);
+        this.quickcraft$missingContainerStacks.remove(pos);
         this.quickcraft$pendingContainerPositions.add(immutablePos);
+    }
+
+    @Unique
+    private void quickcraft$rememberMissingContainer(BlockPos pos, Inventory expected) {
+        List<ItemStack> stacks = new ArrayList<>();
+        for (int slot = 0; slot < expected.size(); slot++) {
+            ItemStack stack = expected.getStack(slot);
+            if (!stack.isEmpty()) {
+                stacks.add(stack.copy());
+            }
+        }
+        this.quickcraft$missingContainerStacks.put(pos.toImmutable(), List.copyOf(stacks));
     }
 
     @Unique
@@ -933,7 +1007,16 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
     private String quickcraft$getContainerMismatchSignature(ContainerMismatch mismatch) {
         StringBuilder builder = new StringBuilder();
 
-        builder.append(mismatch.type().ordinal()).append('|');
+        builder.append(mismatch.type().ordinal())
+                .append('|')
+                .append(mismatch.expectedState())
+                .append('|')
+                .append(mismatch.foundState())
+                .append('|')
+                .append(mismatch.expectedDisabledSlots().stream().sorted().toList())
+                .append('|')
+                .append(mismatch.foundDisabledSlots().stream().sorted().toList())
+                .append('|');
 
         for (QuickLitematicaContainerVerifier.SlotMismatch slotMismatch : mismatch.slotMismatches()) {
             builder.append(slotMismatch.slot())
@@ -944,9 +1027,9 @@ public abstract class LitematicaSchematicVerifierMixin extends TaskBase implemen
                     .append(':')
                     .append(slotMismatch.foundStack().getCount())
                     .append(':')
-                    .append(slotMismatch.expectedStack().isEmpty() ? "empty" : slotMismatch.expectedStack().getItem())
+                    .append(QuickLitematicaContainerVerifier.getItemStackSignature(slotMismatch.expectedStack()))
                     .append(':')
-                    .append(slotMismatch.foundStack().isEmpty() ? "empty" : slotMismatch.foundStack().getItem())
+                    .append(QuickLitematicaContainerVerifier.getItemStackSignature(slotMismatch.foundStack()))
                     .append(';');
         }
 
